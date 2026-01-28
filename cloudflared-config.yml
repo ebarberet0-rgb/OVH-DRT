@@ -1,0 +1,22 @@
+tunnel: 546111e4-3f0c-48a7-b064-68d892ea0fb6
+credentials-file: C:\Users\EricBARBERET\.cloudflared\546111e4-3f0c-48a7-b064-68d892ea0fb6.json
+
+ingress:
+  # Service 1 - Tablette
+  - hostname: demo-service1.barberet.fr
+    service: http://localhost:5174
+
+  # Service 2 - Backoffice
+  - hostname: demo-service2.barberet.fr
+    service: http://localhost:5175
+
+  # Service 3 - Web
+  - hostname: demo-service3.barberet.fr
+    service: http://localhost:5173
+
+  # Service 4 - API
+  - hostname: demo-service4.barberet.fr
+    service: http://localhost:3001
+
+  # Catch-all (obligatoire)
+  - service: http_status:404

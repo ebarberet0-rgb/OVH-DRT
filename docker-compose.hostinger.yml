@@ -1,0 +1,227 @@
+version: '3.8'
+
+services:
+  # =============================================================================
+  # Traefik - Reverse Proxy (déjà existant chez Hostinger)
+  # =============================================================================
+  traefik:
+    image: traefik
+    command:
+      - --api=true
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.mytlschallenge.acme.tlschallenge=true
+      - --certificatesresolvers.mytlschallenge.acme.email=user@srv1118207.hstgr.cloud
+      - --certificatesresolvers.mytlschallenge.acme.storage=/letsencrypt/acme.json
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    restart: always
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - traefik_data:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - traefik-network
+      - yamaha-network
+
+  # =============================================================================
+  # N8N (gardé tel quel)
+  # =============================================================================
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.n8n.rule=Host(`n8n.barberet.fr`)
+      - traefik.http.routers.n8n.tls=true
+      - traefik.http.routers.n8n.entrypoints=web,websecure
+      - traefik.http.routers.n8n.tls.certresolver=mytlschallenge
+      - traefik.http.middlewares.n8n.headers.SSLRedirect=true
+      - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
+      - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
+      - traefik.http.middlewares.n8n.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.n8n.headers.forceSTSHeader=true
+      - traefik.http.middlewares.n8n.headers.SSLHost=barberet.fr
+      - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
+      - traefik.http.middlewares.n8n.headers.STSPreload=true
+      - traefik.http.routers.n8n.middlewares=n8n@docker
+    environment:
+      - N8N_HOST=n8n.barberet.fr
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://n8n.barberet.fr/
+      - GENERIC_TIMEZONE=Europe/Paris
+      - N8N_PROXY_HOPS=1
+    restart: always
+    ports:
+      - 127.0.0.1:5678:5678
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - /local-files:/files
+    networks:
+      - traefik-network
+
+  # =============================================================================
+  # PostgreSQL Database - Yamaha DRT
+  # =============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: yamaha-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-yamaha_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ChangeMeInProduction123!}
+      POSTGRES_DB: ${DB_NAME:-yamaha_drt}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - yamaha-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-yamaha_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================================================
+  # Redis Cache - Yamaha DRT
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: yamaha-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - yamaha-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
+  # =============================================================================
+  # API Backend - Yamaha DRT
+  # =============================================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yamaha-api
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.yamaha-api.rule=Host(`api.barberet.fr`)
+      - traefik.http.routers.yamaha-api.tls=true
+      - traefik.http.routers.yamaha-api.entrypoints=web,websecure
+      - traefik.http.routers.yamaha-api.tls.certresolver=mytlschallenge
+      - traefik.http.services.yamaha-api.loadbalancer.server.port=3001
+      # Middleware pour WebSocket
+      - traefik.http.middlewares.yamaha-api-headers.headers.customrequestheaders.X-Forwarded-Proto=https
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER:-yamaha_user}:${DB_PASSWORD:-ChangeMeInProduction123!}@postgres:5432/${DB_NAME:-yamaha_drt}?schema=public
+      - REDIS_URL=redis://redis:6379
+      - API_URL=https://api.barberet.fr
+    volumes:
+      - ./uploads:/app/uploads
+      - ./apps/api/logs:/app/apps/api/logs
+    networks:
+      - traefik-network
+      - yamaha-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # =============================================================================
+  # Site Web Public - Yamaha DRT
+  # =============================================================================
+  web:
+    image: nginx:alpine
+    container_name: yamaha-web
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.yamaha-web.rule=Host(`drt.barberet.fr`)
+      - traefik.http.routers.yamaha-web.tls=true
+      - traefik.http.routers.yamaha-web.entrypoints=web,websecure
+      - traefik.http.routers.yamaha-web.tls.certresolver=mytlschallenge
+      - traefik.http.services.yamaha-web.loadbalancer.server.port=80
+    volumes:
+      - ./apps/web/dist:/usr/share/nginx/html:ro
+      - ./nginx-spa.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - traefik-network
+
+  # =============================================================================
+  # Back Office Admin - Yamaha DRT
+  # =============================================================================
+  backoffice:
+    image: nginx:alpine
+    container_name: yamaha-backoffice
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.yamaha-backoffice.rule=Host(`admin.barberet.fr`)
+      - traefik.http.routers.yamaha-backoffice.tls=true
+      - traefik.http.routers.yamaha-backoffice.entrypoints=web,websecure
+      - traefik.http.routers.yamaha-backoffice.tls.certresolver=mytlschallenge
+      - traefik.http.services.yamaha-backoffice.loadbalancer.server.port=80
+    volumes:
+      - ./apps/backoffice/dist:/usr/share/nginx/html:ro
+      - ./nginx-spa.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - traefik-network
+
+  # =============================================================================
+  # Interface Tablette - Yamaha DRT
+  # =============================================================================
+  tablette:
+    image: nginx:alpine
+    container_name: yamaha-tablette
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.yamaha-tablette.rule=Host(`tablette.barberet.fr`)
+      - traefik.http.routers.yamaha-tablette.tls=true
+      - traefik.http.routers.yamaha-tablette.entrypoints=web,websecure
+      - traefik.http.routers.yamaha-tablette.tls.certresolver=mytlschallenge
+      - traefik.http.services.yamaha-tablette.loadbalancer.server.port=80
+    volumes:
+      - ./apps/tablette/dist:/usr/share/nginx/html:ro
+      - ./nginx-spa.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - traefik-network
+
+# =============================================================================
+# Volumes persistants
+# =============================================================================
+volumes:
+  traefik_data:
+    external: true
+  n8n_data:
+    external: true
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# =============================================================================
+# Réseaux
+# =============================================================================
+networks:
+  traefik-network:
+    driver: bridge
+  yamaha-network:
+    driver: bridge

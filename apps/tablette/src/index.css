@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-50 m-0;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    min-height: 100vh;
+  }
+
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    width: 100%;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .touch-target {
+    @apply min-h-touch min-w-touch flex items-center justify-center;
+  }
+
+  .tablet-card {
+    @apply bg-white rounded-lg shadow-md p-6;
+  }
+
+  .tablet-button {
+    @apply px-6 py-3 rounded-lg font-semibold transition-all touch-target;
+  }
+
+  .tablet-button-primary {
+    @apply tablet-button bg-yamaha-blue text-white hover:bg-opacity-90 active:scale-95;
+  }
+
+  .tablet-button-secondary {
+    @apply tablet-button bg-gray-200 text-gray-800 hover:bg-gray-300 active:scale-95;
+  }
+
+  .tablet-button-danger {
+    @apply tablet-button bg-yamaha-red text-white hover:bg-opacity-90 active:scale-95;
+  }
+}

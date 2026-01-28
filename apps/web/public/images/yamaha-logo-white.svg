@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 150" width="500" height="150">
+  <!-- Yamaha Tuning Fork Symbol - White version for dark backgrounds -->
+  <g id="tuning-fork-circle">
+    <!-- White Circle Background -->
+    <circle cx="75" cy="75" r="65" fill="#FFFFFF"/>
+    <circle cx="75" cy="75" r="65" fill="none" stroke="#E8E8E8" stroke-width="2"/>
+    <circle cx="75" cy="75" r="60" fill="none" stroke="#F5F5F5" stroke-width="3"/>
+
+    <!-- Tuning Fork Symbol in Red -->
+    <g id="tuning-fork" fill="#DA291C" stroke="#CC0000" stroke-width="0.5">
+      <!-- Center star/top of tuning fork -->
+      <polygon points="75,25 78,35 88,35 80,42 83,52 75,45 67,52 70,42 62,35 72,35"/>
+
+      <!-- Three prongs of tuning fork -->
+      <!-- Left prong -->
+      <rect x="60" y="45" width="8" height="50" rx="2"/>
+      <ellipse cx="64" cy="95" rx="5" ry="8" fill="#B81C1C"/>
+
+      <!-- Center prong -->
+      <rect x="71" y="45" width="8" height="55" rx="2"/>
+      <ellipse cx="75" cy="100" rx="5" ry="8" fill="#B81C1C"/>
+
+      <!-- Right prong -->
+      <rect x="82" y="45" width="8" height="50" rx="2"/>
+      <ellipse cx="86" cy="95" rx="5" ry="8" fill="#B81C1C"/>
+
+      <!-- Crossbars connecting prongs -->
+      <rect x="60" y="55" width="30" height="3" rx="1"/>
+      <rect x="60" y="70" width="30" height="3" rx="1"/>
+    </g>
+  </g>
+
+  <!-- YAMAHA Text in White -->
+  <g id="yamaha-text" fill="#FFFFFF">
+    <path d="M 170 40 L 195 110 L 210 110 L 235 40 L 218 40 L 202.5 90 L 187 40 Z"/>
+    <path d="M 245 40 L 280 110 L 297 110 L 332 40 L 315 40 L 288.5 95 L 262 40 Z"/>
+    <path d="M 340 40 L 340 110 L 395 110 L 395 95 L 357 95 L 357 82 L 390 82 L 390 68 L 357 68 L 357 54 L 395 54 L 395 40 Z"/>
+    <path d="M 405 40 L 405 110 L 422 110 L 422 82 L 442 82 L 455 110 L 473 110 L 458 80 Q 473 75 473 60 Q 473 40 450 40 Z M 422 54 L 445 54 Q 456 54 456 60 Q 456 68 445 68 L 422 68 Z"/>
+
+    <!-- Second line: MOTOR -->
+    <g transform="translate(0, -5)" font-size="14" font-family="Arial, sans-serif" font-weight="bold" letter-spacing="3">
+      <text x="340" y="135" fill="#FFFFFF">MOTOR</text>
+    </g>
+  </g>
+</svg>

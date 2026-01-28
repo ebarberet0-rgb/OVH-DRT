@@ -1,0 +1,221 @@
+# =============================================================================
+# Docker Compose - Production (OVH VPS)
+# Yamaha Demo Ride Tour
+# =============================================================================
+# IMPORTANT: Remplacez VOTRE_DOMAINE.com par votre domaine réel
+# Exemples: yamaha-drt.fr, drt.votredomaine.com, etc.
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # Traefik - Reverse Proxy avec TLS automatique (Let's Encrypt)
+  # ===========================================================================
+  traefik:
+    image: traefik:v3.0
+    container_name: yamaha-traefik
+    restart: unless-stopped
+    command:
+      # API et Dashboard
+      - --api=true
+      - --api.dashboard=true
+      - --api.insecure=false
+      # Providers
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=yamaha-traefik
+      # Entrypoints
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      # Let's Encrypt
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@VOTRE_DOMAINE.com}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      # Logs
+      - --log.level=INFO
+      - --accesslog=true
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - traefik_data:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - yamaha-traefik
+    labels:
+      # Dashboard Traefik (optionnel, sécurisé par auth)
+      - traefik.enable=true
+      - traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${DOMAIN:-VOTRE_DOMAINE.com}`)
+      - traefik.http.routers.traefik-dashboard.entrypoints=websecure
+      - traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt
+      - traefik.http.routers.traefik-dashboard.service=api@internal
+      - traefik.http.routers.traefik-dashboard.middlewares=traefik-auth
+      # Auth basique pour le dashboard (changez le mot de passe!)
+      # Générer avec: htpasswd -nb admin votre_mot_de_passe
+      - traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_AUTH:-admin:$$apr1$$xyz$$hashedpassword}
+
+  # ===========================================================================
+  # PostgreSQL Database
+  # ===========================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: yamaha-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-yamaha_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-yamaha_drt}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - yamaha-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-yamaha_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================================
+  # Redis Cache & Queue
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: yamaha-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - yamaha-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================================
+  # API Backend
+  # ===========================================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yamaha-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER:-yamaha_user}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-yamaha_drt}?schema=public
+      - REDIS_URL=redis://redis:6379
+      - API_URL=https://api.${DOMAIN:-VOTRE_DOMAINE.com}
+      - WEB_URL=https://www.${DOMAIN:-VOTRE_DOMAINE.com}
+      - BACKOFFICE_URL=https://admin.${DOMAIN:-VOTRE_DOMAINE.com}
+      - TABLET_URL=https://tablette.${DOMAIN:-VOTRE_DOMAINE.com}
+    volumes:
+      - ./uploads:/app/uploads
+      - api_logs:/app/apps/api/logs
+    networks:
+      - yamaha-traefik
+      - yamaha-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.yamaha-api.rule=Host(`api.${DOMAIN:-VOTRE_DOMAINE.com}`)
+      - traefik.http.routers.yamaha-api.entrypoints=websecure
+      - traefik.http.routers.yamaha-api.tls.certresolver=letsencrypt
+      - traefik.http.services.yamaha-api.loadbalancer.server.port=3001
+      # Headers pour WebSocket et CORS
+      - traefik.http.middlewares.yamaha-api-headers.headers.accesscontrolallowmethods=GET,OPTIONS,PUT,POST,DELETE,PATCH
+      - traefik.http.middlewares.yamaha-api-headers.headers.accesscontrolalloworiginlist=https://www.${DOMAIN:-VOTRE_DOMAINE.com},https://admin.${DOMAIN:-VOTRE_DOMAINE.com},https://tablette.${DOMAIN:-VOTRE_DOMAINE.com}
+      - traefik.http.middlewares.yamaha-api-headers.headers.accesscontrolmaxage=100
+      - traefik.http.middlewares.yamaha-api-headers.headers.addvaryheader=true
+      - traefik.http.routers.yamaha-api.middlewares=yamaha-api-headers
+
+  # ===========================================================================
+  # Site Web Public
+  # ===========================================================================
+  web:
+    image: nginx:alpine
+    container_name: yamaha-web
+    restart: unless-stopped
+    volumes:
+      - ./apps/web/dist:/usr/share/nginx/html:ro
+      - ./nginx-spa.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - yamaha-traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.yamaha-web.rule=Host(`www.${DOMAIN:-VOTRE_DOMAINE.com}`) || Host(`${DOMAIN:-VOTRE_DOMAINE.com}`)
+      - traefik.http.routers.yamaha-web.entrypoints=websecure
+      - traefik.http.routers.yamaha-web.tls.certresolver=letsencrypt
+      - traefik.http.services.yamaha-web.loadbalancer.server.port=80
+      # Redirection du domaine nu vers www
+      - traefik.http.middlewares.www-redirect.redirectregex.regex=^https://${DOMAIN:-VOTRE_DOMAINE.com}/(.*)
+      - traefik.http.middlewares.www-redirect.redirectregex.replacement=https://www.${DOMAIN:-VOTRE_DOMAINE.com}/$${1}
+
+  # ===========================================================================
+  # Back Office Admin
+  # ===========================================================================
+  backoffice:
+    image: nginx:alpine
+    container_name: yamaha-backoffice
+    restart: unless-stopped
+    volumes:
+      - ./apps/backoffice/dist:/usr/share/nginx/html:ro
+      - ./nginx-spa.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - yamaha-traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.yamaha-backoffice.rule=Host(`admin.${DOMAIN:-VOTRE_DOMAINE.com}`)
+      - traefik.http.routers.yamaha-backoffice.entrypoints=websecure
+      - traefik.http.routers.yamaha-backoffice.tls.certresolver=letsencrypt
+      - traefik.http.services.yamaha-backoffice.loadbalancer.server.port=80
+
+  # ===========================================================================
+  # Interface Tablette
+  # ===========================================================================
+  tablette:
+    image: nginx:alpine
+    container_name: yamaha-tablette
+    restart: unless-stopped
+    volumes:
+      - ./apps/tablette/dist:/usr/share/nginx/html:ro
+      - ./nginx-spa.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - yamaha-traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.yamaha-tablette.rule=Host(`tablette.${DOMAIN:-VOTRE_DOMAINE.com}`)
+      - traefik.http.routers.yamaha-tablette.entrypoints=websecure
+      - traefik.http.routers.yamaha-tablette.tls.certresolver=letsencrypt
+      - traefik.http.services.yamaha-tablette.loadbalancer.server.port=80
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  traefik_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  api_logs:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  yamaha-traefik:
+    driver: bridge
+  yamaha-internal:
+    driver: bridge
+    internal: true

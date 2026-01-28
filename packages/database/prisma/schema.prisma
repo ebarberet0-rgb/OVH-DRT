@@ -1,0 +1,452 @@
+// Schéma Prisma pour Yamaha Demo Ride Tour
+// Base de données PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// Utilisateurs et authentification
+// ============================================================================
+
+enum UserRole {
+  ADMIN       // Héloïse + équipe DRT centrale
+  DEALER      // Concessionnaires
+  INSTRUCTOR  // Instructeurs moto
+  CLIENT      // Clients/essayeurs
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String?  // Hash bcrypt (null pour OAuth)
+  firstName String
+  lastName  String
+  phone     String
+  role      UserRole @default(CLIENT)
+
+  // Profil client
+  postalCode       String?
+  city             String?
+  currentBrand     String?  // Marque de moto actuelle
+  currentModel     String?  // Modèle de moto actuelle
+  licenseType      LicenseType?
+  licenseNumber    String?
+  licenseIssueDate DateTime?
+  licenseExpiryDate DateTime?
+
+  // Relations
+  bookings                Booking[]
+  clientSatisfactionForms ClientSatisfactionForm[]
+  instructorSessions      Session[]                @relation("InstructorSessions")
+  drtTeamReports          DRTTeamReport[]
+  eventInstructors        EventInstructor[]        // Événements assignés à l'instructeur
+
+  // Métadonnées
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([role])
+}
+
+// ============================================================================
+// Concessionnaires
+// ============================================================================
+
+model Dealer {
+  id          String  @id @default(cuid())
+  name        String
+  email       String  @unique
+  phone       String
+  address     String
+  city        String
+  postalCode  String
+  region      String
+  latitude    Float?
+  longitude   Float?
+
+  // Site Winteam
+  winteamUrl  String?
+
+  // Relations
+  events                  Event[]
+  dealerSatisfactionForms DealerSatisfactionForm[]
+
+  // Métadonnées
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([city])
+  @@index([region])
+}
+
+// ============================================================================
+// Modèles de motos
+// ============================================================================
+
+enum LicenseType {
+  A   // Toutes motos
+  A2  // Motos bridées
+  A1  // 125cc
+}
+
+enum MotorcycleGroup {
+  GROUP_1  // Petites cylindrées et A2
+  GROUP_2  // Grosses cylindrées (permis A)
+}
+
+enum MotorcycleStatus {
+  AVAILABLE
+  IN_USE
+  DAMAGED
+  UNDER_REPAIR
+}
+
+model Motorcycle {
+  id              String            @id @default(cuid())
+  model           String
+  plateNumber     String            @unique
+  bikeNumber      Int               @unique  // Numéro sticker sur la moto
+  group           MotorcycleGroup
+  status          MotorcycleStatus  @default(AVAILABLE)
+  imageUrl        String
+  requiredLicense LicenseType
+  isYAMT          Boolean           @default(false)  // Modèle Y-AMT
+
+  // Relations
+  bookings        Booking[]
+  damages         MotorcycleDamage[]
+  availabilities  MotorcycleAvailability[]
+
+  // Métadonnées
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([group])
+}
+
+model MotorcycleDamage {
+  id                  String    @id @default(cuid())
+  motorcycleId        String
+  motorcycle          Motorcycle @relation(fields: [motorcycleId], references: [id], onDelete: Cascade)
+
+  reportedAt          DateTime  @default(now())
+  reportedBy          String    // User ID
+  description         String    @db.Text
+  estimatedRepairDate DateTime?
+  repairedAt          DateTime?
+
+  @@index([motorcycleId])
+  @@index([reportedAt])
+}
+
+model MotorcycleAvailability {
+  id           String     @id @default(cuid())
+  motorcycleId String
+  motorcycle   Motorcycle @relation(fields: [motorcycleId], references: [id], onDelete: Cascade)
+  eventId      String
+  event        Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  isAvailable  Boolean    @default(true)
+
+  @@unique([motorcycleId, eventId])
+  @@index([eventId])
+}
+
+// ============================================================================
+// Événements et sessions
+// ============================================================================
+
+enum EventType {
+  DEALERSHIP    // En concession
+  PUBLIC_EVENT  // Événement public
+}
+
+model Event {
+  id        String    @id @default(cuid())
+  name      String
+  type      EventType
+  dealerId  String?
+  dealer    Dealer?   @relation(fields: [dealerId], references: [id], onDelete: SetNull)
+
+  // Dates et localisation
+  startDate  DateTime
+  endDate    DateTime
+  address    String
+  city       String
+  postalCode String
+  latitude   Float?
+  longitude  Float?
+
+  // Configuration
+  maxSlotsPerSession Int @default(7)  // Max 7 clients par session
+
+  // Relations
+  sessions                Session[]
+  bookings                Booking[]
+  motorcycleAvailabilities MotorcycleAvailability[]
+  clientSatisfactionForms ClientSatisfactionForm[]
+  dealerSatisfactionForms DealerSatisfactionForm[]
+  drtTeamReports          DRTTeamReport[]
+  eventInstructors        EventInstructor[]        // Instructeurs assignés à cet événement
+
+  // Métadonnées
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([startDate])
+  @@index([city])
+  @@index([dealerId])
+}
+
+// Table de liaison Many-to-Many entre Event et Instructor
+model EventInstructor {
+  id           String   @id @default(cuid())
+  eventId      String
+  event        Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  instructorId String
+  instructor   User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+
+  assignedAt   DateTime @default(now())
+
+  @@unique([eventId, instructorId])
+  @@index([eventId])
+  @@index([instructorId])
+}
+
+model Session {
+  id             String          @id @default(cuid())
+  eventId        String
+  event          Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  group          MotorcycleGroup
+  startTime      DateTime
+  endTime        DateTime
+  availableSlots Int             @default(7)
+  bookedSlots    Int             @default(0)
+
+  instructorId   String?
+  instructor     User?           @relation("InstructorSessions", fields: [instructorId], references: [id], onDelete: SetNull)
+
+  // Relations
+  bookings       Booking[]
+
+  @@index([eventId])
+  @@index([startTime])
+  @@index([group])
+}
+
+// ============================================================================
+// Réservations
+// ============================================================================
+
+enum BookingStatus {
+  RESERVED     // Réservé en ligne
+  CONFIRMED    // Présence confirmée sur place
+  IN_PROGRESS  // Essai en cours
+  COMPLETED    // Essai terminé
+  CANCELLED    // Annulé
+  NO_SHOW      // Non présenté
+}
+
+enum BookingSource {
+  WEBSITE
+  TABLET
+  DEALER_SITE
+}
+
+model Booking {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventId      String
+  event        Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sessionId    String
+  session      Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  motorcycleId String
+  motorcycle   Motorcycle    @relation(fields: [motorcycleId], references: [id], onDelete: Restrict)
+
+  status       BookingStatus @default(RESERVED)
+  source       BookingSource
+
+  // Documents signés
+  hasSignedWaiver Boolean @default(false)
+  hasPhotoConsent Boolean @default(false)
+
+  // Photos permis
+  licensePhotoFrontUrl String?
+  licensePhotoBackUrl  String?
+
+  // Relation formulaire satisfaction
+  satisfactionForm ClientSatisfactionForm?
+
+  // Métadonnées
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  cancelledAt DateTime?
+
+  @@index([userId])
+  @@index([eventId])
+  @@index([sessionId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// Formulaires de satisfaction
+// ============================================================================
+
+model ClientSatisfactionForm {
+  id        String  @id @default(cuid())
+  bookingId String  @unique
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventId   String
+  event     Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  // Satisfaction (1-5)
+  overallRating      Int
+  motorcycleRating   Int
+  instructorRating   Int
+  organizationRating Int
+
+  // Intention d'achat
+  purchaseIntent    String  // YES, MAYBE, NO
+  purchaseTimeframe String? // 0-3_MONTHS, 3-6_MONTHS, etc.
+
+  // Commentaires
+  comments String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([eventId])
+  @@index([userId])
+}
+
+model DealerSatisfactionForm {
+  id       String @id @default(cuid())
+  eventId  String
+  event    Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  dealerId String
+  dealer   Dealer @relation(fields: [dealerId], references: [id], onDelete: Cascade)
+
+  // Satisfaction (1-5)
+  organizationRating Int
+  teamRating         Int
+
+  // Auto-déclaration
+  animationsDescription String @db.Text
+  promotionsOffered     String @db.Text
+  salesCount            Int
+
+  // Engagement futur
+  wouldParticipateAgain Boolean
+
+  createdAt DateTime @default(now())
+
+  @@unique([eventId, dealerId])
+  @@index([eventId])
+}
+
+model DRTTeamReport {
+  id           String @id @default(cuid())
+  eventId      String
+  event        Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  reportedBy   String
+  reporter     User   @relation(fields: [reportedBy], references: [id], onDelete: Cascade)
+
+  // Notation des 5 critères
+  leadTreatmentScore      Float  // Traitement des leads
+  animationScore          Float  // Animations
+  teamEngagementScore     Float  // Engagement équipes
+  communicationScore      Float  // Communication
+  clientSatisfactionScore Float  // Satisfaction client
+
+  // Total
+  totalScore Float
+
+  // Photos et notes
+  photoUrls             String[]  // Array de URLs
+  dealerInvestmentNotes String    @db.Text
+  animationNotes        String    @db.Text
+  salesNotes            String    @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@unique([eventId])
+  @@index([eventId])
+}
+
+// ============================================================================
+// Notifications et communications
+// ============================================================================
+
+enum NotificationType {
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model Notification {
+  id          String             @id @default(cuid())
+  type        NotificationType
+  status      NotificationStatus @default(PENDING)
+  recipient   String             // Email ou téléphone
+  subject     String?
+  content     String             @db.Text
+  templateId  String?            // ID du template utilisé
+
+  // Métadonnées
+  sentAt      DateTime?
+  failedAt    DateTime?
+  errorMessage String?
+
+  createdAt   DateTime           @default(now())
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// Analytics et statistiques
+// ============================================================================
+
+model WebsiteAnalytics {
+  id              String   @id @default(cuid())
+  sessionId       String
+  userId          String?
+
+  // Tracking
+  source          String?  // google, dealer_site, facebook, etc.
+  campaign        String?  // META campaign ID
+  device          String?  // mobile, tablet, desktop
+  browser         String?
+
+  // Pages visitées
+  landingPage     String
+  exitPage        String?
+  pagesVisited    Int      @default(1)
+  timeSpent       Int?     // en secondes
+
+  // Conversion
+  hasBooked       Boolean  @default(false)
+  bookingId       String?
+
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([source])
+  @@index([hasBooked])
+}

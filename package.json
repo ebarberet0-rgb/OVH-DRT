@@ -1,0 +1,29 @@
+{
+  "name": "yamaha-drt",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Yamaha Demo Ride Tour - Système de gestion des essais motos",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "typecheck": "turbo run typecheck"
+  },
+  "keywords": ["yamaha", "demo-ride-tour", "motorcycle"],
+  "author": "Yamaha France",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "turbo": "^1.11.0",
+    "typescript": "^5.3.3"
+  }
+}
